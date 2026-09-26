@@ -21,6 +21,14 @@ public class Game1Controller : MonoBehaviour
     [Header("Game Settings")]
     [SerializeField] private float gameDuration = 30f;
 
+    [Header("Medium Shrink Settings")]
+    [SerializeField] private float mediumShrinkDelay = 0.25f;
+    [SerializeField] private float mediumShrinkDuration = 0.70f;
+
+    [Header("Spawn Safety")]
+    [SerializeField] private int positionAttempts = 30;
+    [SerializeField] private float extraSpawnPadding = 10f;
+
     private Difficulty difficulty;
 
     private float timeRemaining;
@@ -97,7 +105,6 @@ public class Game1Controller : MonoBehaviour
         {
             timeRemaining = 0f;
             EndGame();
-
             return;
         }
 
@@ -166,7 +173,6 @@ public class Game1Controller : MonoBehaviour
     {
         if (activeKeys.Count == 0)
         {
-            // There is no target to remove.
             keyMisses++;
             return;
         }
@@ -234,17 +240,25 @@ public class Game1Controller : MonoBehaviour
             return;
         }
 
+        float size = difficulty == Difficulty.Easy ? 110f : 88f;
+
+        Vector2 position;
+
+        if (!TryGetSafeTargetPosition(
+                new Vector2(size, size),
+                out position))
+        {
+            return;
+        }
+
         GameObject objectInstance =
             Instantiate(circleTargetPrefab, targetContainer);
 
         RectTransform rect =
             objectInstance.GetComponent<RectTransform>();
 
-        rect.anchoredPosition = GetRandomTargetPosition(rect.sizeDelta);
-
-        float size = difficulty == Difficulty.Easy ? 110f : 88f;
-
         rect.sizeDelta = new Vector2(size, size);
+        rect.anchoredPosition = position;
 
         CircleTarget target =
             objectInstance.GetComponent<CircleTarget>();
@@ -255,7 +269,11 @@ public class Game1Controller : MonoBehaviour
 
         bool shrink = difficulty == Difficulty.Medium;
 
-        target.Initialize(this, lifetime, shrink);
+        target.Initialize(
+            this,
+            lifetime,
+            shrink
+        );
     }
 
     private void SpawnKey()
@@ -270,19 +288,29 @@ public class Game1Controller : MonoBehaviour
             return;
         }
 
+        float width = difficulty == Difficulty.Easy ? 125f : 105f;
+        float height = difficulty == Difficulty.Easy ? 95f : 80f;
+
+        Vector2 targetSize =
+            new Vector2(width, height);
+
+        Vector2 position;
+
+        if (!TryGetSafeTargetPosition(
+                targetSize,
+                out position))
+        {
+            return;
+        }
+
         GameObject objectInstance =
             Instantiate(keyTargetPrefab, targetContainer);
 
         RectTransform rect =
             objectInstance.GetComponent<RectTransform>();
 
-        float width = difficulty == Difficulty.Easy ? 125f : 105f;
-        float height = difficulty == Difficulty.Easy ? 95f : 80f;
-
-        rect.sizeDelta = new Vector2(width, height);
-
-        rect.anchoredPosition =
-            GetRandomTargetPosition(rect.sizeDelta);
+        rect.sizeDelta = targetSize;
+        rect.anchoredPosition = position;
 
         KeyTarget target =
             objectInstance.GetComponent<KeyTarget>();
@@ -306,18 +334,23 @@ public class Game1Controller : MonoBehaviour
 
         bool shrink = difficulty == Difficulty.Medium;
 
-        target.Initialize(this, lifetime, shrink);
+        target.Initialize(
+            this,
+            lifetime,
+            shrink
+        );
     }
 
     private KeyTargetLetter GetRandomKeyLetter()
     {
-        int random =
-            Random.Range(0, 4);
+        int random = Random.Range(0, 4);
 
         return (KeyTargetLetter)random;
     }
 
-    private Vector2 GetRandomTargetPosition(Vector2 targetSize)
+    private bool TryGetSafeTargetPosition(
+        Vector2 targetSize,
+        out Vector2 position)
     {
         Rect rect = gameArea.rect;
 
@@ -347,10 +380,133 @@ public class Game1Controller : MonoBehaviour
             verticalMargin -
             targetSize.y * 0.5f;
 
-        return new Vector2(
-            Random.Range(xMin, xMax),
-            Random.Range(yMin, yMax)
-        );
+        for (int attempt = 0; attempt < positionAttempts; attempt++)
+        {
+            Vector2 candidate = new Vector2(
+                Random.Range(xMin, xMax),
+                Random.Range(yMin, yMax)
+            );
+
+            if (IsPositionSafe(candidate, targetSize))
+            {
+                position = candidate;
+                return true;
+            }
+        }
+
+        // If no safe position was found after all attempts,
+        // do not spawn the object.
+        position = Vector2.zero;
+        return false;
+    }
+
+    private bool IsPositionSafe(
+        Vector2 candidate,
+        Vector2 candidateSize)
+    {
+        float candidateHalfWidth =
+            candidateSize.x * 0.5f;
+
+        float candidateHalfHeight =
+            candidateSize.y * 0.5f;
+
+        for (int i = 0; i < activeCircles.Count; i++)
+        {
+            CircleTarget circle = activeCircles[i];
+
+            if (circle == null)
+            {
+                continue;
+            }
+
+            RectTransform rect =
+                circle.GetComponent<RectTransform>();
+
+            if (rect == null)
+            {
+                continue;
+            }
+
+            if (RectanglesOverlap(
+                    candidate,
+                    candidateHalfWidth,
+                    candidateHalfHeight,
+                    rect.anchoredPosition,
+                    rect.rect.width * 0.5f,
+                    rect.rect.height * 0.5f))
+            {
+                return false;
+            }
+        }
+
+        for (int i = 0; i < activeKeys.Count; i++)
+        {
+            KeyTarget key = activeKeys[i];
+
+            if (key == null)
+            {
+                continue;
+            }
+
+            RectTransform rect =
+                key.GetComponent<RectTransform>();
+
+            if (rect == null)
+            {
+                continue;
+            }
+
+            if (RectanglesOverlap(
+                    candidate,
+                    candidateHalfWidth,
+                    candidateHalfHeight,
+                    rect.anchoredPosition,
+                    rect.rect.width * 0.5f,
+                    rect.rect.height * 0.5f))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool RectanglesOverlap(
+        Vector2 positionA,
+        float halfWidthA,
+        float halfHeightA,
+        Vector2 positionB,
+        float halfWidthB,
+        float halfHeightB)
+    {
+        float horizontalDistance =
+            Mathf.Abs(positionA.x - positionB.x);
+
+        float verticalDistance =
+            Mathf.Abs(positionA.y - positionB.y);
+
+        float requiredHorizontalDistance =
+            halfWidthA +
+            halfWidthB +
+            extraSpawnPadding;
+
+        float requiredVerticalDistance =
+            halfHeightA +
+            halfHeightB +
+            extraSpawnPadding;
+
+        return horizontalDistance < requiredHorizontalDistance &&
+               verticalDistance < requiredVerticalDistance;
+    }
+
+    public float GetMediumShrinkDelay()
+    {
+        return mediumShrinkDelay;
+    }
+
+    public float GetMediumShrinkDuration()
+    {
+        return mediumShrinkDuration;
     }
 
     public void TargetHit(Game1TargetBase target)
@@ -401,9 +557,7 @@ public class Game1Controller : MonoBehaviour
 
             Destroy(circle.gameObject);
 
-            // IMPORTANT:
-            // No immediate replacement here.
-            // The regular spawn cadence will eventually replace it.
+            // No immediate replacement.
         }
         else if (target is KeyTarget key)
         {
@@ -430,7 +584,6 @@ public class Game1Controller : MonoBehaviour
 
             Destroy(key.gameObject);
 
-            // IMPORTANT:
             // No immediate replacement after a wrong key.
         }
     }
@@ -528,6 +681,7 @@ public class Game1Controller : MonoBehaviour
     public void Stop()
     {
         running = false;
+
         ClearTargets();
     }
 
